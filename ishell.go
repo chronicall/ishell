@@ -509,7 +509,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 			strs = strs[offset : maxRows+offset-1]
 		}
 		// move the cursor up to keep the output in place
-		s.Printf("\033[%dA", optionLen*2)
+		s.Printf("\r\033[%dA", optionLen*2)
 		// clear from the cursor to the end of the screen
 		s.Print("\033[0J")
 		s.Println(text)
@@ -524,7 +524,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 			if cur >= maxRows+offset-1 {
 				offset++
 			}
-			if cur >= len(options) {
+			if cur >= optionLen {
 				offset = fd
 				cur = 0
 			}
@@ -534,12 +534,12 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 				offset--
 			}
 			if cur < 0 {
-				if len(options) > maxRows-1 {
-					offset = len(options) - maxRows + 1
+				if optionLen > maxRows-1 {
+					offset = optionLen - maxRows + 1
 				} else {
 					offset = fd
 				}
-				cur = len(options) - 1
+				cur = optionLen - 1
 			}
 		} else if key == -3 {
 			if multiResults {

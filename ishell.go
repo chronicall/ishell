@@ -493,23 +493,34 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 
 	// move cursor down enough lines so that on first update the cursor doesn't overwrite previous lines
 	// TODO it happens on every update, however, some trash appears in history without this line
-	optionLen := len(options)
-	s.Printf("\033[%dB", optionLen)
+	s.Printf("\033[%dB", len(options))
 
 	offset := fd
 
-	update := func(lastUpdate bool) {
+	update := func(lastUpdate, toggling bool) {
+		optionLen := len(options)
+		cursorOffset := 0
+		multiplier := 2
+		if toggling {
+			multiplier = 1
+		}
 		// ensures that there will be no mismatch between the lines printed out after a carriage return
 		// the extra line after hitting the enter key was messing things up
 		if lastUpdate {
-			optionLen += (optionLen / 2) + 1
+			optionLen += (len(options) / 2) + 1
 		}
+		cursorOffset = optionLen * multiplier
+		if lastUpdate && len(options)%2 == 0 {
+			cursorOffset--
+		}
+
 		strs := buildOptionsStrings(options, selected, cur)
 		if len(strs) > maxRows-1 {
 			strs = strs[offset : maxRows+offset-1]
 		}
+
 		// move the cursor up to keep the output in place
-		s.Printf("\r\033[%dA", optionLen*2)
+		s.Printf("\r\033[%dA", cursorOffset)
 		// clear from the cursor to the end of the screen
 		s.Print("\033[0J")
 		s.Println(text)
@@ -524,7 +535,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 			if cur >= maxRows+offset-1 {
 				offset++
 			}
-			if cur >= optionLen {
+			if cur >= len(options) {
 				offset = fd
 				cur = 0
 			}
@@ -534,12 +545,12 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 				offset--
 			}
 			if cur < 0 {
-				if optionLen > maxRows-1 {
-					offset = optionLen - maxRows + 1
+				if len(options) > maxRows-1 {
+					offset = len(options) - maxRows + 1
 				} else {
 					offset = fd
 				}
-				cur = optionLen - 1
+				cur = len(options) - 1
 			}
 		} else if key == -3 {
 			if multiResults {
@@ -561,6 +572,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 	defer t.Stop()
 	go func() {
 		finishSelection := false
+		toggling := false
 		for {
 			select {
 			case <-stop:
@@ -568,13 +580,16 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 			case pressed := <-refresh:
 				if pressed.keyPressed == 13 {
 					finishSelection = true
+				} else if pressed.keyPressed == -3 {
+					toggling = true
 				}
-				update(finishSelection)
+				update(finishSelection, toggling)
+				toggling = false
 			case <-t.C:
 				_, rows, _ := readline.GetSize(fd)
 				if maxRows != rows {
 					maxRows = rows
-					update(finishSelection)
+					update(finishSelection, toggling)
 				}
 			}
 		}

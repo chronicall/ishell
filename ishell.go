@@ -451,6 +451,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 
 	conf.DisableAutoSaveHistory = true
 
+	// only filter space bar to -3 if this is a checklist
 	conf.FuncFilterInputRune = func(r rune) (rune, bool) {
 		switch r {
 		case 16:
@@ -458,8 +459,11 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 		case 14:
 			return -2, true
 		case 32:
-			return -3, true
-
+			if multiResults {
+				return -3, true
+			} else {
+				return 32, true
+			}
 		}
 		return r, true
 	}
@@ -487,25 +491,30 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 		return nil
 	}
 
-	// move cursor to the top
-	// TODO it happens on every update, however, some trash appears in history without this line
-	s.Print("\033[0;0H")
-
 	offset := fd
 
-	update := func() {
+	update := func(lastUpdate bool) {
 		strs := buildOptionsStrings(options, selected, cur)
 		if len(strs) > maxRows-1 {
 			strs = strs[offset : maxRows+offset-1]
 		}
-		s.Print("\033[0;0H")
+		// if this is the last update, e.g. the user hit enter last, we only want to move the cursor up one line
+		// NOTE: for some reason, this has to happen BEFORE the screen is cleared
+		if lastUpdate {
+			s.Print("\r\033[1A")
+		}
 		// clear from the cursor to the end of the screen
-		s.Print("\033[0J")
+		s.Print("\r\033[0J")
 		s.Println(text)
 		s.Print(strings.Join(strs, "\n"))
+		// if this is NOT  the last update, move the cursor up to keep the output in place
+		// NOTE: and for some reason, this has to happen after the screen is cleared..
+		if !lastUpdate {
+			s.Printf("\r\033[%dA", len(strs))
+		}
 	}
 	var lastKey rune
-	refresh := make(chan struct{}, 1)
+	refresh := make(chan struct{ keyPressed rune }, 1)
 	listener := func(line []rune, pos int, key rune) (newline []rune, newPos int, ok bool) {
 		lastKey = key
 		if key == -2 {
@@ -535,7 +544,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 				selected = toggle(selected, cur)
 			}
 		}
-		refresh <- struct{}{}
+		refresh <- struct{ keyPressed rune }{key}
 		return
 	}
 	conf.Listener = readline.FuncListener(listener)
@@ -549,17 +558,21 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 	t := time.NewTicker(time.Millisecond * 200)
 	defer t.Stop()
 	go func() {
+		finishSelection := false
 		for {
 			select {
 			case <-stop:
 				return
-			case <-refresh:
-				update()
+			case pressed := <-refresh:
+				if pressed.keyPressed == 13 {
+					finishSelection = true
+				}
+				update(finishSelection)
 			case <-t.C:
 				_, rows, _ := readline.GetSize(fd)
 				if maxRows != rows {
 					maxRows = rows
-					update()
+					update(finishSelection)
 				}
 			}
 		}

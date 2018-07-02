@@ -491,40 +491,27 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 		return nil
 	}
 
-	// move cursor down enough lines so that on first update the cursor doesn't overwrite previous lines
-	// TODO it happens on every update, however, some trash appears in history without this line
-	s.Printf("\033[%dB", len(options))
-
 	offset := fd
 
-	update := func(lastUpdate, toggling bool) {
-		optionLen := len(options)
-		cursorOffset := 0
-		multiplier := 2
-		if toggling {
-			multiplier = 1
-		}
-		// ensures that there will be no mismatch between the lines printed out after a carriage return
-		// the extra line after hitting the enter key was messing things up
-		if lastUpdate {
-			optionLen += (len(options) / 2) + 1
-		}
-		cursorOffset = optionLen * multiplier
-		if lastUpdate && len(options)%2 == 0 {
-			cursorOffset--
-		}
-
+	update := func(lastUpdate bool) {
 		strs := buildOptionsStrings(options, selected, cur)
 		if len(strs) > maxRows-1 {
 			strs = strs[offset : maxRows+offset-1]
 		}
-
-		// move the cursor up to keep the output in place
-		s.Printf("\r\033[%dA", cursorOffset)
+		// if this is the last update, e.g. the user hit enter last, we only want to move the cursor up one line
+		// NOTE: for some reason, this has to happen BEFORE the screen is cleared
+		if lastUpdate {
+			s.Print("\r\033[1A")
+		}
 		// clear from the cursor to the end of the screen
-		s.Print("\033[0J")
+		s.Print("\r\033[0J")
 		s.Println(text)
 		s.Print(strings.Join(strs, "\n"))
+		// if this is NOT  the last update, move the cursor up to keep the output in place
+		// NOTE: and for some reason, this has to happen after the screen is cleared..
+		if !lastUpdate {
+			s.Printf("\r\033[%dA", len(strs))
+		}
 	}
 	var lastKey rune
 	refresh := make(chan struct{ keyPressed rune }, 1)
@@ -572,7 +559,6 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 	defer t.Stop()
 	go func() {
 		finishSelection := false
-		toggling := false
 		for {
 			select {
 			case <-stop:
@@ -580,16 +566,13 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 			case pressed := <-refresh:
 				if pressed.keyPressed == 13 {
 					finishSelection = true
-				} else if pressed.keyPressed == -3 {
-					toggling = true
 				}
-				update(finishSelection, toggling)
-				toggling = false
+				update(finishSelection)
 			case <-t.C:
 				_, rows, _ := readline.GetSize(fd)
 				if maxRows != rows {
 					maxRows = rows
-					update(finishSelection, toggling)
+					update(finishSelection)
 				}
 			}
 		}

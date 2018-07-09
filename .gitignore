@@ -3,3 +3,7 @@
 example/example
 .idea/
 *.iml
+
+#vim
+*.swp
+*.swo

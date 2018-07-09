@@ -56,6 +56,12 @@ type Shell struct {
 	Actions
 }
 
+type MultiOptions struct {
+	Initial   []int
+	Locked    []int
+	Connected map[int][]int
+}
+
 // New creates a new shell with default settings. Uses standard output and default prompt ">> ".
 func New() *Shell {
 	return NewWithConfig(&readline.Config{Prompt: defaultPrompt})
@@ -434,16 +440,56 @@ func initSelected(init []int, max int) []int {
 	return selected
 }
 
-func toggle(selected []int, cur int) []int {
+func toggle(selected []int, locked *[]int, connected map[int][]int, cur int) []int {
+	// Check if the option is already locked, if so just return without changes
+	for _, l := range *locked {
+		if l == cur {
+			return selected
+		}
+	}
 	for i, s := range selected {
 		if s == cur {
+			// If the current option being toggled is in the connected map it has a length greater than 0
+			if len(connected[cur]) > 0 {
+				// Loop over all of the options that are connected to the current option
+				for _, c := range connected[cur] {
+					// Remove the option from the locked list
+					for ind, l := range *locked {
+						if c == l {
+							*locked = append((*locked)[:ind], (*locked)[ind+1:]...)
+							break
+						}
+					}
+				}
+			}
 			return append(selected[:i], selected[i+1:]...)
+		}
+	}
+	// Deselect options in the connected list and add them to the locked list before returning
+	if len(connected[cur]) > 0 {
+		for _, c := range connected[cur] {
+			for i, s := range selected {
+				// If the option is already selected, remove it from the selected list
+				if c == s {
+					selected = append(selected[:i], selected[i+1:]...)
+				}
+			}
+			// Add the connected option to the locked list if it isn't already present in the list
+			alreadyLocked := false
+			for _, l := range *locked {
+				if c == l {
+					alreadyLocked = true
+				}
+			}
+			if !alreadyLocked {
+				*locked = append(*locked, c)
+			}
 		}
 	}
 	return append(selected, cur)
 }
 
-func (s *Shell) multiChoice(options []string, text string, init []int, multiResults bool) []int {
+func (s *Shell) multiChoice(options []string, text string, multiOpts MultiOptions, multiResults bool) []int {
 	s.multiChoiceActive = true
 	defer func() { s.multiChoiceActive = false }()
 
@@ -459,18 +505,14 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 		case 14:
 			return -2, true
 		case 32:
-			if multiResults {
-				return -3, true
-			} else {
-				return 32, true
-			}
+			return -3, true
 		}
 		return r, true
 	}
 
 	var selected []int
 	if multiResults {
-		selected = initSelected(init, len(options))
+		selected = initSelected(multiOpts.Initial, len(options))
 	}
 
 	s.ShowPrompt(false)
@@ -494,7 +536,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 	offset := fd
 
 	update := func(lastUpdate bool) {
-		strs := buildOptionsStrings(options, selected, cur)
+		strs := buildOptionsStrings(options, selected, multiOpts.Locked, cur)
 		if len(strs) > maxRows-1 {
 			strs = strs[offset : maxRows+offset-1]
 		}
@@ -541,7 +583,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 			}
 		} else if key == -3 {
 			if multiResults {
-				selected = toggle(selected, cur)
+				selected = toggle(selected, &multiOpts.Locked, multiOpts.Connected, cur)
 			}
 		}
 		refresh <- struct{ keyPressed rune }{key}
@@ -594,7 +636,7 @@ func (s *Shell) multiChoice(options []string, text string, init []int, multiResu
 	return []int{cur}
 }
 
-func buildOptionsStrings(options []string, selected []int, index int) []string {
+func buildOptionsStrings(options []string, selected []int, locked []int, index int) []string {
 	var strs []string
 	symbol := " ❯"
 	if runtime.GOOS == "windows" {
@@ -610,11 +652,27 @@ func buildOptionsStrings(options []string, selected []int, index int) []string {
 				mark = "⬢ "
 			}
 		}
+		isLocked := false
+		for _, l := range locked {
+			if i == l {
+				isLocked = true
+			}
+		}
 		if i == index {
-			cyan := color.New(color.FgCyan).Add(color.Bold).SprintFunc()
-			strs = append(strs, cyan(symbol+mark+opt))
+			if isLocked {
+				faint := color.New(color.Faint).SprintFunc()
+				strs = append(strs, faint(symbol+mark+opt))
+			} else {
+				cyan := color.New(color.FgCyan).Add(color.Bold).SprintFunc()
+				strs = append(strs, cyan(symbol+mark+opt))
+			}
 		} else {
-			strs = append(strs, "  "+mark+opt)
+			if isLocked {
+				faint := color.New(color.Faint).SprintFunc()
+				strs = append(strs, faint("  "+mark+opt))
+			} else {
+				strs = append(strs, "  "+mark+opt)
+			}
 		}
 	}
 	return strs
